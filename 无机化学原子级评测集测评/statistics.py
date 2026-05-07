@@ -64,56 +64,68 @@ def get_chapter_stats(data_list):
 # =================================================================
 
 def variable_radius_pie_chart(chapters, widths_data, inner_radius_ratios, labels, title=None):
-    """绘制带智能引线和防重叠效果的变半径玫瑰图。
+    """
+    绘制变半径南丁格尔玫瑰图，并自动优化窄扇区标签排布。
+
+    功能特性：
+    1. 自动排序：按扇区宽度升序排列，将窄扇区（小角度）集中于图表底部，避开顶部标题。
+    2. 智能标签：宽扇区直接标注，窄扇区自动生成引线以防文字重叠。
+    3. 维度展示：扇区角度代表总量（widths_data），扇区半径代表表现指标（inner_radius_ratios）。
 
     Args:
-        chapters (list): 章节索引列表。
-        widths_data (list): 各扇区宽度数据（代表样本总量或消耗总量）。
-        inner_radius_ratios (list): 各扇区实心半径占比（代表表现指标）。
-        labels (list): 标注在图上的文本。
+        chapters (list): 章节名或索引序列。
+        widths_data (list): 扇区宽度数值，决定扇区弧度大小。
+        inner_radius_ratios (list): 半径比例（0-1），决定扇区实心部分高度。
+        labels (list): 随标签显示的补充数值或说明文本。
         title (str, optional): 图表标题。
     """
-    total_width_sum = sum(widths_data)
-    if total_width_sum == 0: return
+    if not widths_data or sum(widths_data) == 0: return
 
-    widths = [(w / total_width_sum) * 2 * np.pi for w in widths_data]
+    # 1. 按宽度升序排列数据，确保窄扇区始于起始位置
+    combined = sorted(zip(widths_data, chapters, inner_radius_ratios, labels), key=lambda x: x[0])
+    widths_sorted, chapters_sorted, ratios_sorted, labels_sorted = zip(*combined)
+
+    # 2. 计算极坐标弧度分布
+    total_width_sum = sum(widths_sorted)
+    widths = [(w / total_width_sum) * 2 * np.pi for w in widths_sorted]
     lefts = np.cumsum([0] + widths[:-1])
 
-    plt.rcParams['font.sans-serif'] = ['SimHei']
-    plt.rcParams['axes.unicode_minus'] = False
-
+    # 3. 画布初始化与中文字体配置
+    plt.rcParams['font.sans-serif'], plt.rcParams['axes.unicode_minus'] = ['SimHei'], False
     fig = plt.figure(figsize=(14, 11))
     ax = fig.add_subplot(111, projection='polar')
-    plt.subplots_adjust(top=0.85, bottom=0.1, left=0.1, right=0.9)
+    plt.subplots_adjust(top=0.8, bottom=0.15, left=0.1, right=0.9)
 
-    colors = plt.cm.plasma(np.linspace(0, 1, len(chapters)))
-    THRESHOLD_RAD = np.deg2rad(12)  # 判定是否触发引线的角度阈值
+    # 4. 旋转坐标轴：从3点钟方向顺时针绘制，使窄扇区汇聚在底部区域
+    ax.set_theta_offset(0)
+    ax.set_theta_direction(-1)
 
-    for i in range(len(chapters)):
-        # 绘制扇区
+    colors = plt.cm.plasma(np.linspace(0, 1, len(chapters_sorted)))
+    THRESHOLD_RAD = np.deg2rad(12) # 触发引线的角度阈值
+
+    for i in range(len(chapters_sorted)):
+        # 绘制背景背景(alpha=0.1)与数据扇区
         ax.bar(lefts[i], 1.0, width=widths[i], color=colors[i], alpha=0.1, align='edge', edgecolor='white')
-        ax.bar(lefts[i], inner_radius_ratios[i], width=widths[i], color=colors[i], alpha=0.8, align='edge')
+        ax.bar(lefts[i], ratios_sorted[i], width=widths[i], color=colors[i], alpha=0.8, align='edge')
 
         mid_angle = lefts[i] + widths[i] / 2
-        display_label = f"{CHAPTER_NAMES.get(chapters[i], chapters[i])}\n({labels[i]})"
-        angle_deg = np.rad2deg(mid_angle) % 360
+        display_label = f"{CHAPTER_NAMES.get(chapters_sorted[i], chapters_sorted[i])}\n({labels_sorted[i]})"
+        curr_deg = np.rad2deg(mid_angle) % 360
 
-        # 智能标签逻辑：宽扇区直接标注，窄扇区使用引线
+        # 5. 智能引线逻辑：根据扇区宽度和所处象限自动调整位置
         if widths[i] > THRESHOLD_RAD:
-            ax.text(mid_angle, 1.12, display_label, ha='center', va='center', fontsize=9, fontweight='bold',
+            ax.text(mid_angle, 1.15, display_label, ha='center', va='center', fontsize=7, fontweight='bold',
                     path_effects=[path_effects.withStroke(linewidth=2, foreground='white')])
         else:
-            is_bottom = 160 <= angle_deg <= 200
-            text_dist = 1.18 if is_bottom else 1.3
+            # 底部扇区（90°-270°）增加引线长度以防拥挤
+            text_dist = 1.35 if (90 <= curr_deg <= 270) else 1.25
             ax.annotate(display_label, xy=(mid_angle, 1.01), xytext=(mid_angle, text_dist),
                         arrowprops=dict(arrowstyle='->', color='gray', lw=0.8, connectionstyle="arc3,rad=0.05"),
-                        ha='left' if 0 <= angle_deg < 180 else 'right', va='center', fontsize=8, fontweight='bold',
+                        ha='left' if curr_deg < 180 else 'right', va='center', fontsize=7, fontweight='bold',
                         path_effects=[path_effects.withStroke(linewidth=2, foreground='white')])
 
-    ax.set_theta_offset(np.pi / 2)
-    ax.set_theta_direction(-1)
     ax.set_axis_off()
-    if title: fig.suptitle(title, fontsize=18, fontweight='bold', y=0.95)
+    if title: fig.suptitle(title, fontsize=18, fontweight='bold', y=0.92)
     plt.show()
 
 
